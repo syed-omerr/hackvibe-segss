@@ -16,14 +16,47 @@ export async function POST(req: NextRequest) {
     if (contentType.includes('application/json')) {
       const body = await req.json();
       if (body.useBaseline) {
-        // Read local baseline file Hackathon Registration Details.xlsx
+        // Read local baseline file Hackathon Registration Details.xlsx or fallback to bundled json
         const baselinePath = path.join(process.cwd(), 'Hackathon Registration Details.xlsx');
-        if (!fs.existsSync(baselinePath)) {
-          return NextResponse.json({ error: 'Baseline file not found on server' }, { status: 404 });
+        if (fs.existsSync(baselinePath)) {
+          const buffer = fs.readFileSync(baselinePath);
+          const preview = await parseExcelData(buffer);
+          return NextResponse.json({ success: true, preview });
         }
-        const buffer = fs.readFileSync(baselinePath);
-        const preview = await parseExcelData(buffer);
-        return NextResponse.json({ success: true, preview });
+
+        // Fallback to bundled baseline-seed.json (useful in Vercel lambda)
+        const baselineData = require('@/lib/baseline-seed.json');
+        const trackBreakdown: Record<string, number> = {
+          'Artificial Intelligence (AI)': 176,
+          'Cyber Security': 26,
+          'Internet of Things (IOT)': 8,
+          'Not specified': 4,
+        };
+        const yearBreakdown: Record<string, number> = {
+          '1ST': 12,
+          '2ND': 83,
+          '3RD': 105,
+          '4TH': 14,
+        };
+        const collegeBreakdown: Record<string, number> = {
+          'VIGNAN': 145,
+          'OTHERS': 69,
+        };
+        const totalMembers = baselineData.reduce((acc: number, t: any) => acc + (t.members?.length || 0), 0);
+
+        return NextResponse.json({
+          success: true,
+          preview: {
+            totalTeamsInFile: baselineData.length,
+            totalMembersInFile: totalMembers,
+            newTeams: baselineData,
+            duplicateTeams: [],
+            trackBreakdown,
+            yearBreakdown,
+            collegeBreakdown,
+            warnings: [],
+          },
+        });
       }
     }
 

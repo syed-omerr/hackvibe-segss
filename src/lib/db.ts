@@ -18,12 +18,24 @@ let dbInstance: DatabaseSync | null = null;
 export function getDb(): DatabaseSync {
   if (dbInstance) return dbInstance;
 
-  const dataDir = path.join(process.cwd(), 'data');
-  if (!fs.existsSync(dataDir)) {
-    fs.mkdirSync(dataDir, { recursive: true });
+  let dbPath = process.env.SQLITE_PATH;
+  if (!dbPath) {
+    const isVercel = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+    let dataDir = '/tmp';
+    if (!isVercel) {
+      const localDataDir = path.join(process.cwd(), 'data');
+      try {
+        if (!fs.existsSync(/* turbopackIgnore: true */ localDataDir)) {
+          fs.mkdirSync(localDataDir, { recursive: true });
+        }
+        dataDir = localDataDir;
+      } catch {
+        dataDir = '/tmp';
+      }
+    }
+    dbPath = path.join(dataDir, 'hackvibe.db');
   }
 
-  const dbPath = process.env.SQLITE_PATH || path.join(dataDir, 'hackvibe.db');
   const db = new DatabaseSync(dbPath);
 
   // Pragmas
@@ -106,6 +118,60 @@ export function getDb(): DatabaseSync {
     }
   } catch (e) {
     console.error('Error initializing id_counter:', e);
+  }
+
+  // Auto-seed baseline data if database is fresh / empty (e.g. on Vercel)
+  try {
+    const teamCountRow = db.prepare('SELECT count(*) as count FROM teams WHERE deleted_at IS NULL').get() as { count: number } | undefined;
+    if (!teamCountRow || teamCountRow.count === 0) {
+      const baselineData = require('./baseline-seed.json');
+      if (Array.isArray(baselineData) && baselineData.length > 0) {
+        db.exec('BEGIN IMMEDIATE');
+        const now = new Date().toISOString();
+        for (const t of baselineData) {
+          const teamId = crypto.randomUUID();
+          db.prepare(`
+            INSERT INTO teams (id, registration_id, team_name, track, source, version, created_at, updated_at, deleted_at)
+            VALUES (?, ?, ?, ?, 'import', 1, ?, ?, NULL)
+          `).run(teamId, t.registration_id, t.team_name, t.track, now, now);
+
+          t.members.forEach((m: any, idx: number) => {
+            const memberId = crypto.randomUUID();
+            db.prepare(`
+              INSERT INTO members (id, team_id, position, name, role, college, branch, year, phone, attendance)
+              VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(
+              memberId,
+              teamId,
+              idx + 1,
+              m.name,
+              m.role,
+              m.college,
+              m.branch,
+              m.year,
+              m.phone,
+              m.attendance || 'UNMARKED'
+            );
+
+            // Add college
+            const isVignan = m.college.trim() === CANONICAL_VIGNAN ? 1 : 0;
+            try {
+              db.prepare('INSERT OR IGNORE INTO colleges (id, name, is_canonical_vignan) VALUES (?, ?, ?)').run(
+                crypto.randomUUID(),
+                m.college.trim(),
+                isVignan
+              );
+            } catch {}
+          });
+        }
+        db.prepare(
+          'INSERT INTO audit_log (id, event, registration_id, actor, details, created_at) VALUES (?, ?, ?, ?, ?, ?)'
+        ).run(crypto.randomUUID(), 'IMPORT', null, 'System', `Auto-seeded ${baselineData.length} baseline teams`, now);
+        db.exec('COMMIT');
+      }
+    }
+  } catch (seedErr) {
+    console.error('Auto-seed check error:', seedErr);
   }
 
   dbInstance = db;
