@@ -36,7 +36,21 @@ export default function RootLayout({
         <footer className="border-t border-slate-900 bg-slate-950/60 py-6 text-center text-xs text-slate-500 font-mono">
           <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row justify-between items-center gap-2">
             <span>HackVibe 2.0 Portal • Automated 12-Sheet Segregation</span>
-            <span className="text-slate-600">Prefix: HV2-2026-OCT • Vignan Institute of Technology &amp; Science</span>
+            <div className="flex flex-wrap items-center justify-center gap-2 text-slate-500">
+              <span className="text-slate-600">Prefix: HV2-2026-OCT • Vignan Institute of Technology &amp; Science</span>
+              <span className="text-slate-800 hidden sm:inline">•</span>
+              <span>
+                Developed by{' '}
+                <a
+                  href="https://larpintech.com"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-violet-400 hover:text-violet-300 font-semibold transition-colors underline underline-offset-4"
+                >
+                  LarpinTech
+                </a>
+              </span>
+            </div>
           </div>
         </footer>
       </body>
