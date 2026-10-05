@@ -233,10 +233,22 @@ export default function NewTeamPage() {
         return;
       }
 
+      if (data.team && typeof window !== 'undefined') {
+        try {
+          const stored = localStorage.getItem('hackvibe_custom_teams');
+          const customTeams = stored ? JSON.parse(stored) : [];
+          const filtered = customTeams.filter((t: any) => t.registration_id !== data.team.registration_id);
+          filtered.unshift(data.team);
+          localStorage.setItem('hackvibe_custom_teams', JSON.stringify(filtered));
+        } catch (e) {
+          console.warn('Failed to cache new team in localStorage', e);
+        }
+      }
+
       setSuccessInfo({
         registrationId: data.registration_id,
         teamName,
-        teamId: data.team.id,
+        teamId: data.registration_id || data.team.id,
       });
     } catch (err: any) {
       setErrorMessage(err.message || 'Network error occurred. Try again.');

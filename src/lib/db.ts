@@ -306,22 +306,22 @@ export function getAllTeams(
   return enriched;
 }
 
-export function getTeamById(id: string): Team | null {
+export function getTeamById(idOrRegId: string): Team | null {
   const db = getDb();
-  const rawTeam = db.prepare('SELECT * FROM teams WHERE id = ?').get(id) as unknown as Team | undefined;
-  if (!rawTeam) return null;
-
-  const members = db.prepare('SELECT * FROM members WHERE team_id = ? ORDER BY position ASC').all(id) as unknown as Member[];
-  return enrichTeam({ ...rawTeam, members });
-}
-
-export function getTeamByRegistrationId(regId: string): Team | null {
-  const db = getDb();
-  const rawTeam = db.prepare('SELECT * FROM teams WHERE registration_id = ?').get(regId) as unknown as Team | undefined;
+  if (!idOrRegId) return null;
+  const trimmed = idOrRegId.trim();
+  let rawTeam = db.prepare('SELECT * FROM teams WHERE id = ?').get(trimmed) as unknown as Team | undefined;
+  if (!rawTeam) {
+    rawTeam = db.prepare('SELECT * FROM teams WHERE UPPER(registration_id) = UPPER(?)').get(trimmed) as unknown as Team | undefined;
+  }
   if (!rawTeam) return null;
 
   const members = db.prepare('SELECT * FROM members WHERE team_id = ? ORDER BY position ASC').all(rawTeam.id) as unknown as Member[];
   return enrichTeam({ ...rawTeam, members });
+}
+
+export function getTeamByRegistrationId(regId: string): Team | null {
+  return getTeamById(regId);
 }
 
 export function findExistingPhone(phone: string, excludeTeamId?: string): { team_name: string; registration_id: string } | null {
@@ -461,7 +461,7 @@ export function createTeam(
 }
 
 export function updateTeam(
-  teamId: string,
+  idOrRegId: string,
   teamData: {
     team_name: string;
     track: string;
@@ -482,10 +482,15 @@ export function updateTeam(
   db.exec('BEGIN IMMEDIATE');
 
   try {
-    const current = db.prepare('SELECT * FROM teams WHERE id = ?').get(teamId) as unknown as Team | undefined;
+    const trimmed = idOrRegId ? idOrRegId.trim() : '';
+    let current = db.prepare('SELECT * FROM teams WHERE id = ?').get(trimmed) as unknown as Team | undefined;
+    if (!current) {
+      current = db.prepare('SELECT * FROM teams WHERE UPPER(registration_id) = UPPER(?)').get(trimmed) as unknown as Team | undefined;
+    }
     if (!current) {
       throw new Error('Team not found');
     }
+    const realTeamId = current.id;
 
     if (expectedVersion !== undefined && current.version !== expectedVersion) {
       throw new Error('CONFLICT: This record has been updated by another user. Please reload and try again.');
@@ -498,10 +503,10 @@ export function updateTeam(
       UPDATE teams 
       SET team_name = ?, track = ?, version = ?, updated_at = ?
       WHERE id = ?
-    `).run(teamData.team_name.trim(), teamData.track, newVersion, now, teamId);
+    `).run(teamData.team_name.trim(), teamData.track, newVersion, now, realTeamId);
 
     // Delete existing members and replace
-    db.prepare('DELETE FROM members WHERE team_id = ?').run(teamId);
+    db.prepare('DELETE FROM members WHERE team_id = ?').run(realTeamId);
 
     const insertedMembers: Member[] = [];
     membersData.forEach((m, idx) => {
@@ -512,7 +517,7 @@ export function updateTeam(
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `).run(
         memberId,
-        teamId,
+        realTeamId,
         idx + 1,
         m.name.trim(),
         m.role,
@@ -527,7 +532,7 @@ export function updateTeam(
 
       insertedMembers.push({
         id: memberId,
-        team_id: teamId,
+        team_id: realTeamId,
         position: idx + 1,
         name: m.name.trim(),
         role: m.role,
@@ -558,23 +563,25 @@ export function updateTeam(
   }
 }
 
-export function softDeleteTeam(id: string): boolean {
+export function softDeleteTeam(idOrRegId: string): boolean {
   const db = getDb();
-  const current = db.prepare('SELECT registration_id FROM teams WHERE id = ? AND deleted_at IS NULL').get(id) as { registration_id: string } | undefined;
+  const trimmed = idOrRegId ? idOrRegId.trim() : '';
+  let current = db.prepare('SELECT id, registration_id FROM teams WHERE (id = ? OR UPPER(registration_id) = UPPER(?)) AND deleted_at IS NULL').get(trimmed, trimmed) as { id: string; registration_id: string } | undefined;
   if (!current) return false;
 
   const now = new Date().toISOString();
-  db.prepare('UPDATE teams SET deleted_at = ? WHERE id = ?').run(now, id);
+  db.prepare('UPDATE teams SET deleted_at = ? WHERE id = ?').run(now, current.id);
   logAudit('DELETE', current.registration_id, 'Soft deleted');
   return true;
 }
 
-export function restoreTeam(id: string): boolean {
+export function restoreTeam(idOrRegId: string): boolean {
   const db = getDb();
-  const current = db.prepare('SELECT registration_id FROM teams WHERE id = ? AND deleted_at IS NOT NULL').get(id) as { registration_id: string } | undefined;
+  const trimmed = idOrRegId ? idOrRegId.trim() : '';
+  let current = db.prepare('SELECT id, registration_id FROM teams WHERE (id = ? OR UPPER(registration_id) = UPPER(?)) AND deleted_at IS NOT NULL').get(trimmed, trimmed) as { id: string; registration_id: string } | undefined;
   if (!current) return false;
 
-  db.prepare('UPDATE teams SET deleted_at = NULL WHERE id = ?').run(id);
+  db.prepare('UPDATE teams SET deleted_at = NULL WHERE id = ?').run(current.id);
   logAudit('RESTORE', current.registration_id, 'Restored');
   return true;
 }

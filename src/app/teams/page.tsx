@@ -49,7 +49,46 @@ export default function RegistryPage() {
       const res = await fetch(`/api/teams?${query.toString()}`);
       if (res.ok) {
         const data = await res.json();
-        setTeams(data.teams || []);
+        let list: Team[] = data.teams || [];
+
+        // Check if there are any locally registered teams that should be present
+        if (typeof window !== 'undefined') {
+          try {
+            const stored = localStorage.getItem('hackvibe_custom_teams');
+            if (stored) {
+              const customTeams: Team[] = JSON.parse(stored);
+              const existingRegIds = new Set(list.map((t) => t.registration_id.toUpperCase()));
+              const missingTeams = customTeams.filter(
+                (ct) => ct.registration_id && !existingRegIds.has(ct.registration_id.toUpperCase())
+              );
+
+              if (missingTeams.length > 0) {
+                // Prepend missing teams (they are recent additions)
+                list = [...missingTeams, ...list];
+
+                // Trigger self-healing background sync to server
+                missingTeams.forEach((mt) => {
+                  fetch('/api/teams', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      team_name: mt.team_name,
+                      track: mt.track,
+                      registration_id: mt.registration_id,
+                      members: mt.members,
+                      overrideDuplicatePhone: true,
+                      overrideDuplicateName: true,
+                    }),
+                  }).catch(() => {});
+                });
+              }
+            }
+          } catch (e) {
+            console.warn('LocalStorage custom teams merge error', e);
+          }
+        }
+
+        setTeams(list);
       }
     } catch (err) {
       console.error('Error fetching teams:', err);
@@ -277,7 +316,21 @@ export default function RegistryPage() {
               ) : teams.length === 0 ? (
                 <tr>
                   <td colSpan={6} className="px-6 py-12 text-center text-slate-500">
-                    No teams found matching the filters.
+                    <p className="text-sm text-slate-400">No teams found matching the filters.</p>
+                    {(selectedTrack !== 'ALL' || selectedYear !== 'ALL' || selectedCollege !== 'ALL' || selectedAttendance !== 'ALL' || search.trim()) && (
+                      <button
+                        onClick={() => {
+                          setSearch('');
+                          setSelectedTrack('ALL');
+                          setSelectedYear('ALL');
+                          setSelectedCollege('ALL');
+                          setSelectedAttendance('ALL');
+                        }}
+                        className="mt-2 inline-flex items-center gap-1.5 text-xs text-violet-400 hover:text-violet-300 underline underline-offset-2"
+                      >
+                        Reset filters to view all teams
+                      </button>
+                    )}
                   </td>
                 </tr>
               ) : (
@@ -375,7 +428,7 @@ export default function RegistryPage() {
                         <td className="px-4 py-3 text-right whitespace-nowrap" onClick={(e) => e.stopPropagation()}>
                           <div className="flex items-center justify-end gap-2">
                             <Link
-                              href={`/teams/${team.id}`}
+                              href={`/teams/${team.registration_id || team.id}`}
                               className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium transition-colors"
                             >
                               Edit

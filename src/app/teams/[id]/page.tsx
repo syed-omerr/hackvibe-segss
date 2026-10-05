@@ -64,7 +64,8 @@ export default function TeamDetailPage() {
       .catch((err) => console.error('Failed to load colleges', err));
 
     // Load team
-    fetch(`/api/teams/${teamId}`)
+    const cleanId = typeof teamId === 'string' ? decodeURIComponent(teamId).trim() : '';
+    fetch(`/api/teams/${encodeURIComponent(cleanId)}`)
       .then((res) => res.json())
       .then((data) => {
         if (data.team) {
@@ -73,10 +74,70 @@ export default function TeamDetailPage() {
           setTrack(data.team.track);
           setMembers(data.team.members || []);
         } else {
-          setError(data.error || 'Team not found');
+          // Check localStorage fallback for instant client resilience
+          let foundLocally = false;
+          if (typeof window !== 'undefined') {
+            try {
+              const stored = localStorage.getItem('hackvibe_custom_teams');
+              if (stored) {
+                const customTeams = JSON.parse(stored);
+                const match = customTeams.find(
+                  (t: any) =>
+                    t.id === cleanId ||
+                    (t.registration_id && t.registration_id.toUpperCase() === cleanId.toUpperCase())
+                );
+                if (match) {
+                  setTeam(match);
+                  setTeamName(match.team_name);
+                  setTrack(match.track);
+                  setMembers(match.members || []);
+                  foundLocally = true;
+                  // Self-heal: sync to server container
+                  fetch('/api/teams', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      team_name: match.team_name,
+                      track: match.track,
+                      registration_id: match.registration_id,
+                      members: match.members,
+                      overrideDuplicatePhone: true,
+                      overrideDuplicateName: true,
+                    }),
+                  }).catch(() => {});
+                }
+              }
+            } catch {}
+          }
+          if (!foundLocally) {
+            setError(data.error || 'Team not found');
+          }
         }
       })
-      .catch((err) => setError(err.message || 'Failed to fetch team'))
+      .catch((err) => {
+        // Fallback to localStorage on network or server error
+        if (typeof window !== 'undefined') {
+          try {
+            const stored = localStorage.getItem('hackvibe_custom_teams');
+            if (stored) {
+              const customTeams = JSON.parse(stored);
+              const match = customTeams.find(
+                (t: any) =>
+                  t.id === cleanId ||
+                  (t.registration_id && t.registration_id.toUpperCase() === cleanId.toUpperCase())
+              );
+              if (match) {
+                setTeam(match);
+                setTeamName(match.team_name);
+                setTrack(match.track);
+                setMembers(match.members || []);
+                return;
+              }
+            }
+          } catch {}
+        }
+        setError(err.message || 'Failed to fetch team');
+      })
       .finally(() => setLoading(false));
   }, [teamId]);
 
