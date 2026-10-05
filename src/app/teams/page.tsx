@@ -54,12 +54,32 @@ export default function RegistryPage() {
         // Check if there are any locally registered teams that should be present
         if (typeof window !== 'undefined') {
           try {
+            const delStored = localStorage.getItem('hackvibe_deleted_teams');
+            const deletedSet = new Set<string>(delStored ? JSON.parse(delStored) : []);
+
+            // If not showing deleted, filter out any deleted IDs
+            if (!showDeleted && deletedSet.size > 0) {
+              list = list.filter(
+                (t) => !deletedSet.has(t.id) && !deletedSet.has(t.registration_id)
+              );
+            } else if (showDeleted && deletedSet.size > 0) {
+              list = list.map((t) =>
+                deletedSet.has(t.id) || deletedSet.has(t.registration_id)
+                  ? { ...t, deleted_at: t.deleted_at || new Date().toISOString() }
+                  : t
+              );
+            }
+
             const stored = localStorage.getItem('hackvibe_custom_teams');
             if (stored) {
               const customTeams: Team[] = JSON.parse(stored);
               const existingRegIds = new Set(list.map((t) => t.registration_id.toUpperCase()));
               const missingTeams = customTeams.filter(
-                (ct) => ct.registration_id && !existingRegIds.has(ct.registration_id.toUpperCase())
+                (ct) =>
+                  ct.registration_id &&
+                  !existingRegIds.has(ct.registration_id.toUpperCase()) &&
+                  !deletedSet.has(ct.id) &&
+                  !deletedSet.has(ct.registration_id)
               );
 
               if (missingTeams.length > 0) {
@@ -105,28 +125,86 @@ export default function RegistryPage() {
     if (!confirm(`Are you sure you want to soft-delete team "${name}"? It can be restored later.`)) {
       return;
     }
+
+    // Optimistic UI update immediately
+    setTeams((prev) => {
+      if (!showDeleted) {
+        return prev.filter((t) => t.id !== id && t.registration_id !== id);
+      } else {
+        return prev.map((t) =>
+          t.id === id || t.registration_id === id
+            ? { ...t, deleted_at: new Date().toISOString() }
+            : t
+        );
+      }
+    });
+
+    // Clean up localStorage immediately so it doesn't resurrect
+    if (typeof window !== 'undefined') {
+      try {
+        const stored = localStorage.getItem('hackvibe_custom_teams');
+        if (stored) {
+          const customTeams: Team[] = JSON.parse(stored);
+          const updated = customTeams.filter((t) => t.id !== id && t.registration_id !== id);
+          localStorage.setItem('hackvibe_custom_teams', JSON.stringify(updated));
+        }
+
+        const delStored = localStorage.getItem('hackvibe_deleted_teams');
+        const deletedSet: string[] = delStored ? JSON.parse(delStored) : [];
+        if (!deletedSet.includes(id)) {
+          deletedSet.push(id);
+          localStorage.setItem('hackvibe_deleted_teams', JSON.stringify(deletedSet));
+        }
+      } catch (e) {
+        console.warn('LocalStorage delete cleanup error', e);
+      }
+    }
+
     try {
-      const res = await fetch(`/api/teams/${id}`, { method: 'DELETE' });
+      const res = await fetch(`/api/teams/${encodeURIComponent(id)}`, { method: 'DELETE' });
       if (res.ok) {
         fetchTeams();
       } else {
         alert('Failed to delete team.');
+        fetchTeams();
       }
     } catch (err) {
       console.error('Delete error:', err);
+      fetchTeams();
     }
   };
 
   const handleRestore = async (id: string) => {
+    // Optimistic UI update immediately
+    setTeams((prev) =>
+      prev.map((t) =>
+        t.id === id || t.registration_id === id ? { ...t, deleted_at: null } : t
+      )
+    );
+
+    // Remove from deleted set in localStorage
+    if (typeof window !== 'undefined') {
+      try {
+        const delStored = localStorage.getItem('hackvibe_deleted_teams');
+        if (delStored) {
+          const deletedSet: string[] = JSON.parse(delStored);
+          const updated = deletedSet.filter((dId) => dId !== id);
+          localStorage.setItem('hackvibe_deleted_teams', JSON.stringify(updated));
+        }
+      } catch {}
+    }
+
     try {
-      const res = await fetch(`/api/teams/${id}/restore`, { method: 'POST' });
+      const res = await fetch(`/api/teams/${encodeURIComponent(id)}/restore`, { method: 'POST' });
       if (res.ok) {
         fetchTeams();
       } else {
         alert('Failed to restore team.');
+        fetchTeams();
       }
     } catch (err) {
       console.error('Restore error:', err);
+      fetchTeams();
     }
   };
 
